@@ -18,7 +18,7 @@ ensure_labels() {
 releasenotes_labels=(
   'B0-silent'
   'B1-releasenotes'
-  'B7-runtimenoteworthy'
+  'B2-runtimenoteworthy'
 )
 
 priority_labels=(

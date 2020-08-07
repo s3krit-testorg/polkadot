@@ -83,7 +83,7 @@ impl EncodeAs<CompactStatement> for Statement {
 pub type SignedFullStatement = Signed<Statement, CompactStatement>;
 
 /// A misbehaviour report.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum MisbehaviorReport {
 	/// These validator nodes disagree on this candidate's validity, please figure it out
 	///

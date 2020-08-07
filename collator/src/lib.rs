@@ -76,7 +76,6 @@ use polkadot_service_new::{
 use sc_service::SpawnTaskHandle;
 use sp_core::traits::SpawnNamed;
 use sp_runtime::traits::BlakeTwo256;
-use consensus_common::SyncOracle;
 
 const COLLATION_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -121,7 +120,7 @@ pub trait BuildParachainContext {
 		self,
 		client: polkadot_service::Client,
 		spawner: SP,
-		network: impl Network + SyncOracle + Clone + 'static,
+		network: impl Network + Clone + 'static,
 	) -> Result<Self::ParachainContext, ()>
 		where
 			SP: SpawnNamed + Clone + Send + Sync + 'static;
@@ -392,7 +391,7 @@ where
 		.into());
 	}
 
-	let (task_manager, client, handles) = polkadot_service::build_full(
+	let (task_manager, client, handlers) = polkadot_service::build_full(
 		config,
 		Some((key.public(), para_id)),
 		None,
@@ -403,11 +402,11 @@ where
 
 	let future = build_collator_service(
 		task_manager.spawn_handle(),
-		handles,
+		handlers,
 		client,
 		para_id,
 		key,
-		build_parachain_context,
+		build_parachain_context
 	)?;
 
 	Ok((future, task_manager))
