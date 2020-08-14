@@ -1,0 +1,33 @@
+name: Update the polkadot-bin package in the Arch User Repository
+on:
+  release:
+    types:
+      - published
+jobs:
+  update_polkadot_bin:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    env:
+      GIT_SSH_COMMAND: 'ssh -i ~/id_rsa_release'
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Arch env
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm git
+      - name: Populate SSH key
+        env:
+          SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          echo "$SSH_KEY" > ~/id_rsa_release
+          chmod 600 ~/id_rsa_release
+      - name: Update repo
+        run: |
+          git clone ssh://aur@aur.archlinux.org/polkadot-bin.git
+          cp scripts/github/update-pkgbuild.sh ./polkadot-bin/
+          cp scripts/github/PKGBUILD.template ./polkadot-bin/
+          cd polkadot-bin
+          ./update-pkgbuild.sh ${{ github.event.tag_name }}
+          git add PKGBUILD .SRCINFO
+          git push
