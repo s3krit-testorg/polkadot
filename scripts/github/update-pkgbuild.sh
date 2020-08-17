@@ -9,13 +9,15 @@ export PKGVER
 export POLKADOT_SHA256
 export POLKADOT_ASC_SHA256
 
+# Receive security@parity.io pubkey
+export GNUPGHOME=/tmp/gnupg-release
+mkdir $GNUPGHOME
+gpg --keyserver keyserver.ubuntu.com --recv-keys 9D4B2B6EB8F97156D19669A9FF0812D491B96798
+
+# Update PKGBUILD file
 envsubst $vars < PKGBUILD.template > PKGBUILD
 
 # Test build
 makepkg -C
 
 makepkg --printsrcinfo > .SRCINFO
-
-git add PKGBUILD .SRCINFO
-git commit -S -m "Update version to v$PKGVER"
-GIT_SSH_COMMAND='ssh -i ../id_rsa_release' git push

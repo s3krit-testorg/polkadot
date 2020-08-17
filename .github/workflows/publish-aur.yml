@@ -9,25 +9,41 @@ jobs:
     container:
       image: archlinux:latest
     env:
-      GIT_SSH_COMMAND: 'ssh -i ~/id_rsa_release'
+      GIT_SSH_COMMAND: 'ssh -i ~/id_rsa_release -o "StrictHostKeyChecking=no"'
     steps:
       - uses: actions/checkout@v2
       - name: Setup Arch env
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm git openssh
-      - name: Populate SSH key
         env:
           SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm git openssh binutils gettext sudo fakeroot
+          mkdir ~/.ssh || true
+          chmod 0700 ~/.ssh
+          echo 'aur.archlinux.org,95.216.144.15 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLMiLrP8pVi5BFX2i3vepSUnpedeiewE5XptnUnau+ZoeUOPkpoCgZZuYfpaIQfhhJJI5qgnjJmr4hyJbe/zxow=' > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
           echo "$SSH_KEY" > ~/id_rsa_release
           chmod 600 ~/id_rsa_release
-      - name: Update repo
+          gpg --keyserver keyserver.ubuntu.com --recv-keys 9D4B2B6EB8F97156D19669A9FF0812D491B96798
+          git config --global user.email "martin@parity.io"
+          git config --global user.name "Parity Releases"
+
+      - name: Update AUR repo
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
         run: |
           git clone ssh://aur@aur.archlinux.org/polkadot-bin.git
           cp scripts/github/update-pkgbuild.sh ./polkadot-bin/
           cp scripts/github/PKGBUILD.template ./polkadot-bin/
+          # Hack around makepkg not wanting to build as root
+          chgrp nobody ./polkadot-bin
+          chown -R nobody:nobody ./polkadot-bin
+          chmod g+ws ./polkadot-bin
+          setfacl -m u::rwx,g::rwx ./polkadot-bin
+          setfacl -d --set u::rwx,g::rwx,o::- ./polkadot-bin
+          # end of hacks
           cd polkadot-bin
-          ./update-pkgbuild.sh ${{ github.event.tag_name }}
+          sudo -u nobody ./update-pkgbuild.sh $VERSION
           git add PKGBUILD .SRCINFO
+          git commit -m "Update version to $VERSION"
           git push
