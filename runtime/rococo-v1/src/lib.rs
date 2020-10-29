@@ -18,7 +18,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
-#![recursion_limit="256"]
+#![recursion_limit = "256"]
 
 use sp_std::prelude::*;
 use codec::Encode;
@@ -191,6 +191,13 @@ sp_api::impl_runtime_apis! {
 			runtime_api_impl::persisted_validation_data::<Runtime>(para_id, assumption)
 		}
 
+		fn check_validation_outputs(
+			para_id: Id,
+			outputs: primitives::v1::ValidationOutputs,
+		) -> bool {
+			runtime_api_impl::check_validation_outputs::<Runtime>(para_id, outputs)
+		}
+
 		fn session_index_for_child() -> SessionIndex {
 			runtime_api_impl::session_index_for_child::<Runtime>()
 		}
@@ -216,6 +223,12 @@ sp_api::impl_runtime_apis! {
 		}
 		fn validator_discovery(validators: Vec<ValidatorId>) -> Vec<Option<AuthorityDiscoveryId>> {
 			runtime_api_impl::validator_discovery::<Runtime>(validators)
+		}
+
+		fn dmq_contents(
+			recipient: Id,
+		) -> Vec<primitives::v1::InboundDownwardMessage<BlockNumber>> {
+			runtime_api_impl::dmq_contents::<Runtime>(recipient)
 		}
 	}
 
@@ -340,6 +353,7 @@ pub type SignedPayload = generic::SignedPayload<Call, SignedExtra>;
 
 impl_opaque_keys! {
 	pub struct SessionKeys {
+		pub grandpa: Grandpa,
 		pub babe: Babe,
 		pub im_online: ImOnline,
 		pub parachain_validator: Initializer,
@@ -377,7 +391,7 @@ construct_runtime! {
 		ParachainOrigin: parachains_origin::{Module, Origin},
 		Config: parachains_configuration::{Module, Call, Storage},
 		Inclusion: parachains_inclusion::{Module, Call, Storage, Event<T>},
-		InclusionInherent: parachains_inclusion_inherent::{Module, Call, Storage},
+		InclusionInherent: parachains_inclusion_inherent::{Module, Call, Storage, Inherent},
 		Scheduler: parachains_scheduler::{Module, Call, Storage},
 		Paras: parachains_paras::{Module, Call, Storage},
 		Initializer: parachains_initializer::{Module, Call, Storage},

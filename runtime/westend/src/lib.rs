@@ -18,7 +18,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
-#![recursion_limit="256"]
+#![recursion_limit = "256"]
 
 use sp_std::prelude::*;
 use codec::{Encode, Decode};
@@ -821,6 +821,13 @@ sp_api::impl_runtime_apis! {
 			None
 		}
 
+		fn check_validation_outputs(
+			_: Id,
+			_: primitives::v1::ValidationOutputs
+		) -> bool {
+			false
+		}
+
 		fn session_index_for_child() -> SessionIndex {
 			0
 		}
@@ -838,6 +845,12 @@ sp_api::impl_runtime_apis! {
 		}
 
 		fn validator_discovery(_: Vec<ValidatorId>) -> Vec<Option<AuthorityDiscoveryId>> {
+			Vec::new()
+		}
+
+		fn dmq_contents(
+			_recipient: Id,
+		) -> Vec<primitives::v1::InboundDownwardMessage<BlockNumber>> {
 			Vec::new()
 		}
 	}
