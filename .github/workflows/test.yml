@@ -1,0 +1,36 @@
+name: Publish draft release
+
+on:
+  push
+
+jobs:
+  build-runtimes:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runtime: ['polkadot', 'kusama']
+    container:
+      image: chevdor/srtool:nightly-2020-07-20
+      volumes:
+        - ${{ github.workspace }}:/build
+      env:
+        PACKAGE: ${{ matrix.runtime }}-runtime
+        RUSTC_VERSION: nightly-2020-07-20
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cache target dir
+        uses: actions/cache@v2
+        with:
+          path: '${{ github.workspace }}/target'
+          key: srtool-target-${{ matrix.runtime }}-${{ github.sha }}
+          restore-keys: |
+            srtool-target-${{ matrix.runtime }}-
+            srtool-target-
+      - name: Build ${{ matrix.runtime }} runtime
+        id: build-runtime
+        shell: bash
+        run: |
+          cd /build
+          pwd
+          ls -la
+          build
