@@ -35,4 +35,4 @@ sp-core = { git = "https://github.com/paritytech/substrate", branch = "master" }
 sp-consensus-babe = { git = "https://github.com/paritytech/substrate", branch = "master" }
 maplit = "1.0.2"
 polkadot-node-subsystem-test-helpers = { path = "../../subsystem-test-helpers" }
-assert_matches = "1.4.0"
+assert_matches = "1.5.0"
