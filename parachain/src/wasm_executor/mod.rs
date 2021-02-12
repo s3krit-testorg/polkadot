@@ -20,9 +20,9 @@
 //! Assuming the parameters are correct, this module provides a wrapper around
 //! a WASM VM for re-execution of a parachain candidate.
 
-use std::{any::{TypeId, Any}, path::PathBuf};
+use std::{any::{TypeId, Any}, path::{Path, PathBuf}};
 use crate::primitives::{ValidationParams, ValidationResult};
-use codec::{Decode, Encode};
+use parity_scale_codec::{Decode, Encode};
 use sp_core::{storage::{ChildInfo, TrackedStorageKey}, traits::{CallInWasm, SpawnNamed}};
 use sp_externalities::Extensions;
 use sp_wasm_interface::HostFunctions as _;
@@ -37,38 +37,52 @@ const MAX_RUNTIME_MEM: usize = 1024 * 1024 * 1024; // 1 GiB
 const MAX_CODE_MEM: usize = 16 * 1024 * 1024; // 16 MiB
 const MAX_VALIDATION_RESULT_HEADER_MEM: usize = MAX_CODE_MEM + 1024; // 16.001 MiB
 
-/// A stub validation-pool defined when compiling for Android or WASM.
-#[cfg(any(target_os = "android", target_os = "unknown"))]
-#[derive(Clone)]
-pub struct ValidationPool {
-	_inner: (), // private field means not publicly-instantiable
-}
-
-#[cfg(any(target_os = "android", target_os = "unknown"))]
-impl ValidationPool {
-	/// Create a new `ValidationPool`.
-	pub fn new() -> Self {
-		ValidationPool { _inner: () }
-	}
-}
-
-/// A stub function defined when compiling for Android or WASM.
-#[cfg(any(target_os = "android", target_os = "unknown"))]
-pub fn run_worker(_: &str) -> Result<(), String> {
-	Err("Cannot run validation worker on this platform".to_string())
-}
-
-/// The execution mode for the `ValidationPool`.
-#[derive(Clone)]
-#[cfg_attr(not(any(target_os = "android", target_os = "unknown")), derive(Debug))]
-pub enum ExecutionMode {
+/// The strategy we employ for isolating execution of wasm parachain validation function (PVF).
+///
+/// For a typical validator an external process is the default way to run PVF. The rationale is based
+/// on the following observations:
+///
+/// (a) PVF is completely under control of parachain developers who may or may not be malicious.
+/// (b) Collators are in charge of providing PoV who also may or may not be malicious.
+/// (c) PVF is executed by a wasm engine based on optimizing compiler which is a very complex piece
+///     of machinery.
+///
+/// (a) and (b) may lead to a situation where due to a combination of PVF and PoV the validation work
+/// can stuck in an infinite loop, which can open up resource exhaustion or DoS attack vectors.
+///
+/// While some execution engines provide functionality to interrupt execution of wasm module from
+/// another thread, there are also some caveats to that: there is no clean way to interrupt execution
+/// if the control flow is in the host side and at the moment we haven't rigoriously vetted that all
+/// host functions terminate or, at least, return in a short amount of time. Additionally, we want
+/// some freedom on choosing wasm execution environment.
+///
+/// On top of that, execution in a separate process helps to minimize impact of (c) if exploited.
+/// It's not only the risk of miscompilation, but it also includes risk of JIT-bombs, i.e. cases
+/// of specially crafted code that take enourmous amounts of time and memory to compile.
+///
+/// At the same time, since PVF validates self-contained candidates, validation workers don't require
+/// extensive communication with polkadot host, therefore there should be no observable performance penalty
+/// coming from inter process communication.
+///
+/// All of the above should give a sense why isolation is crucial for a typical use-case.
+///
+/// However, in some cases, e.g. when running PVF validation on android (for whatever reason), we
+/// cannot afford the luxury of process isolation and thus there is an option to run validation in
+/// process. Also, running in process is convenient for testing.
+#[derive(Clone, Debug)]
+pub enum IsolationStrategy {
 	/// The validation worker is ran in a thread inside the same process.
 	InProcess,
 	/// The validation worker is ran using the process' executable and the subcommand `validation-worker` is passed
 	/// following by the address of the shared memory.
-	ExternalProcessSelfHost(ValidationPool),
+	#[cfg(not(any(target_os = "android", target_os = "unknown")))]
+	ExternalProcessSelfHost {
+		pool: ValidationPool,
+		cache_base_path: Option<String>,
+	},
 	/// The validation worker is ran using the command provided and the argument provided. The address of the shared
 	/// memory is added at the end of the arguments.
+	#[cfg(not(any(target_os = "android", target_os = "unknown")))]
 	ExternalProcessCustomHost {
 		/// Validation pool.
 		pool: ValidationPool,
@@ -80,6 +94,19 @@ pub enum ExecutionMode {
 	},
 }
 
+impl IsolationStrategy {
+	#[cfg(not(any(target_os = "android", target_os = "unknown")))]
+	pub fn external_process_with_caching(cache_base_path: Option<&Path>) -> Self {
+		// Convert cache path to string here so that we don't have to do that each time we launch
+		// validation worker.
+		let cache_base_path = cache_base_path.map(|path| path.display().to_string());
+
+		Self::ExternalProcessSelfHost {
+			pool: ValidationPool::new(),
+			cache_base_path,
+		}
+	}
+}
 
 #[derive(Debug, thiserror::Error)]
 /// Candidate validation error.
@@ -136,6 +163,30 @@ pub enum InternalError {
 	WasmWorker(String),
 }
 
+/// A cache of executors for different parachain Wasm instances.
+///
+/// This should be reused across candidate validation instances.
+pub struct ExecutorCache(sc_executor::WasmExecutor);
+
+impl ExecutorCache {
+	/// Returns a new instance of an executor cache.
+	///
+	/// `cache_base_path` allows to specify a directory where the executor is allowed to store files
+	/// for caching, e.g. compilation artifacts.
+	pub fn new(cache_base_path: Option<PathBuf>) -> ExecutorCache {
+		ExecutorCache(sc_executor::WasmExecutor::new(
+			#[cfg(all(feature = "wasmtime", not(any(target_os = "android", target_os = "unknown"))))]
+			sc_executor::WasmExecutionMethod::Compiled,
+			#[cfg(any(not(feature = "wasmtime"), target_os = "android", target_os = "unknown"))]
+			sc_executor::WasmExecutionMethod::Interpreted,
+			// TODO: Make sure we don't use more than 1GB: https://github.com/paritytech/polkadot/issues/699
+			Some(1024),
+			HostFunctions::host_functions(),
+			8,
+			cache_base_path,
+		))
+	}
+}
 
 /// Validate a candidate under the given validation code.
 ///
@@ -143,29 +194,27 @@ pub enum InternalError {
 pub fn validate_candidate(
 	validation_code: &[u8],
 	params: ValidationParams,
-	execution_mode: &ExecutionMode,
+	isolation_strategy: &IsolationStrategy,
 	spawner: impl SpawnNamed + 'static,
 ) -> Result<ValidationResult, ValidationError> {
-	match execution_mode {
-		ExecutionMode::InProcess => {
-			validate_candidate_internal(validation_code, &params.encode(), spawner)
+	match isolation_strategy {
+		IsolationStrategy::InProcess => {
+			validate_candidate_internal(
+				&ExecutorCache::new(None),
+				validation_code,
+				&params.encode(),
+				spawner,
+			)
 		},
 		#[cfg(not(any(target_os = "android", target_os = "unknown")))]
-		ExecutionMode::ExternalProcessSelfHost(pool) => {
-			pool.validate_candidate(validation_code, params)
+		IsolationStrategy::ExternalProcessSelfHost { pool, cache_base_path } => {
+			pool.validate_candidate(validation_code, params, cache_base_path.as_deref())
 		},
 		#[cfg(not(any(target_os = "android", target_os = "unknown")))]
-		ExecutionMode::ExternalProcessCustomHost { pool, binary, args } => {
+		IsolationStrategy::ExternalProcessCustomHost { pool, binary, args } => {
 			let args: Vec<&str> = args.iter().map(|x| x.as_str()).collect();
 			pool.validate_candidate_custom(validation_code, params, binary, &args)
 		},
-		#[cfg(any(target_os = "android", target_os = "unknown"))]
-		ExecutionMode::ExternalProcessSelfHost(_) | ExecutionMode::ExternalProcessCustomHost { .. } =>
-			Err(ValidationError::Internal(InternalError::System(
-				Box::<dyn std::error::Error + Send + Sync>::from(
-					"Remote validator not available".to_string()
-				) as Box<_>
-			))),
 	}
 }
 
@@ -176,17 +225,12 @@ type HostFunctions = sp_io::SubstrateHostFunctions;
 ///
 /// This will fail if the validation code is not a proper parachain validation module.
 pub fn validate_candidate_internal(
+	executor: &ExecutorCache,
 	validation_code: &[u8],
 	encoded_call_data: &[u8],
 	spawner: impl SpawnNamed + 'static,
 ) -> Result<ValidationResult, ValidationError> {
-	let executor = sc_executor::WasmExecutor::new(
-		sc_executor::WasmExecutionMethod::Interpreted,
-		// TODO: Make sure we don't use more than 1GB: https://github.com/paritytech/polkadot/issues/699
-		Some(1024),
-		HostFunctions::host_functions(),
-		8
-	);
+	let executor = &executor.0;
 
 	let mut extensions = Extensions::new();
 	extensions.register(sp_core::traits::TaskExecutorExt::new(spawner));
@@ -194,9 +238,16 @@ pub fn validate_candidate_internal(
 
 	let mut ext = ValidationExternalities(extensions);
 
+	// Expensive, but not more-so than recompiling the wasm module.
+	// And we need this hash to access the `sc_executor` cache.
+	let code_hash = {
+		use polkadot_core_primitives::{BlakeTwo256, HashT};
+		BlakeTwo256::hash(validation_code)
+	};
+
 	let res = executor.call_in_wasm(
 		validation_code,
-		None,
+		Some(code_hash.as_bytes().to_vec()),
 		"validate_block",
 		encoded_call_data,
 		&mut ext,
@@ -228,7 +279,7 @@ impl sp_externalities::Externalities for ValidationExternalities {
 		panic!("child_storage: unsupported feature for parachain validation")
 	}
 
-	fn kill_child_storage(&mut self, _: &ChildInfo) {
+	fn kill_child_storage(&mut self, _: &ChildInfo, _: Option<u32>) -> bool {
 		panic!("kill_child_storage: unsupported feature for parachain validation")
 	}
 
@@ -246,10 +297,6 @@ impl sp_externalities::Externalities for ValidationExternalities {
 
 	fn place_child_storage(&mut self, _: &ChildInfo, _: Vec<u8>, _: Option<Vec<u8>>) {
 		panic!("place_child_storage: unsupported feature for parachain validation")
-	}
-
-	fn chain_id(&self) -> u64 {
-		panic!("chain_id: unsupported feature for parachain validation")
 	}
 
 	fn storage_root(&mut self) -> Vec<u8> {

@@ -16,15 +16,18 @@
 set -e # fail on any error
 
 #Include the common functions library
-#shellcheck source=lib.sh
-. "$(dirname "${0}")/lib.sh"
+#shellcheck source=../common/lib.sh
+. "$(dirname "${0}")/../common/lib.sh"
 
 SUBSTRATE_REPO="https://github.com/paritytech/substrate"
 SUBSTRATE_REPO_CARGO="git\+${SUBSTRATE_REPO}"
 SUBSTRATE_VERSIONS_FILE="bin/node/runtime/src/lib.rs"
 
 # figure out the latest release tag
-LATEST_TAG="$(git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+boldprint "make sure we have all tags (including those from the release branch)"
+git fetch --depth="${GIT_DEPTH:-100}" origin release
+git fetch --depth="${GIT_DEPTH:-100}" origin 'refs/tags/*:refs/tags/*'
+LATEST_TAG="$(git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-?[0-9]*$' | sort -V | tail -n 1)"
 boldprint "latest release tag ${LATEST_TAG}"
 
 boldprint "latest 10 commits of ${CI_COMMIT_REF_NAME}"
@@ -32,6 +35,7 @@ git --no-pager log --graph --oneline --decorate=short -n 10
 
 boldprint "make sure the master branch is available in shallow clones"
 git fetch --depth="${GIT_DEPTH:-100}" origin master
+
 
 runtimes=(
   "kusama"

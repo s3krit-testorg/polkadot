@@ -22,7 +22,7 @@ use sp_std::{prelude::*, mem::swap, convert::TryInto};
 use sp_runtime::traits::{
 	CheckedSub, StaticLookup, Zero, One, CheckedConversion, Hash, AccountIdConversion,
 };
-use codec::{Encode, Decode, Codec};
+use parity_scale_codec::{Encode, Decode, Codec};
 use frame_support::{
 	decl_module, decl_storage, decl_event, decl_error, ensure, dispatch::DispatchResult,
 	traits::{Currency, ReservableCurrency, WithdrawReasons, ExistenceRequirement, Get, Randomness},
@@ -34,12 +34,12 @@ use primitives::v1::{
 use frame_system::{ensure_signed, ensure_root};
 use crate::slot_range::{SlotRange, SLOT_RANGE_COUNT};
 
-type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as frame_system::Trait>::AccountId>>::Balance;
+type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 /// The module's configuration trait.
-pub trait Trait: frame_system::Trait {
+pub trait Config: frame_system::Config {
 	/// The overarching event type.
-	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
+	type Event: From<Event<Self>> + Into<<Self as frame_system::Config>::Event>;
 
 	/// The currency type used for bidding.
 	type Currency: ReservableCurrency<Self::AccountId>;
@@ -161,18 +161,18 @@ pub enum IncomingParachain<AccountId, Hash> {
 	Deploy { code: ValidationCode, initial_head_data: HeadData },
 }
 
-type LeasePeriodOf<T> = <T as frame_system::Trait>::BlockNumber;
+type LeasePeriodOf<T> = <T as frame_system::Config>::BlockNumber;
 // Winning data type. This encodes the top bidders of each range together with their bid.
 type WinningData<T> =
-	[Option<(Bidder<<T as frame_system::Trait>::AccountId>, BalanceOf<T>)>; SLOT_RANGE_COUNT];
+	[Option<(Bidder<<T as frame_system::Config>::AccountId>, BalanceOf<T>)>; SLOT_RANGE_COUNT];
 // Winners data type. This encodes each of the final winners of a parachain auction, the parachain
 // index assigned to them, their winning bid and the range that they won.
 type WinnersData<T> =
-	Vec<(Option<NewBidder<<T as frame_system::Trait>::AccountId>>, ParaId, BalanceOf<T>, SlotRange)>;
+	Vec<(Option<NewBidder<<T as frame_system::Config>::AccountId>>, ParaId, BalanceOf<T>, SlotRange)>;
 
 // This module's storage items.
 decl_storage! {
-	trait Store for Module<T: Trait> as Slots {
+	trait Store for Module<T: Config> as Slots {
 		/// The number of auctions that have been started so far.
 		pub AuctionCounter get(fn auction_counter): AuctionIndex;
 
@@ -245,7 +245,7 @@ fn swap_ordered_existence<T: PartialOrd + Ord + Copy>(ids: &mut [T], one: T, oth
 	ids.sort();
 }
 
-impl<T: Trait> SwapAux for Module<T> {
+impl<T: Config> SwapAux for Module<T> {
 	fn ensure_can_swap(one: ParaId, other: ParaId) -> Result<(), &'static str> {
 		if <Onboarding<T>>::contains_key(one) || <Onboarding<T>>::contains_key(other) {
 			Err("can't swap an undeployed parachain")?
@@ -262,8 +262,8 @@ impl<T: Trait> SwapAux for Module<T> {
 
 decl_event!(
 	pub enum Event<T> where
-		AccountId = <T as frame_system::Trait>::AccountId,
-		BlockNumber = <T as frame_system::Trait>::BlockNumber,
+		AccountId = <T as frame_system::Config>::AccountId,
+		BlockNumber = <T as frame_system::Config>::BlockNumber,
 		LeasePeriod = LeasePeriodOf<T>,
 		ParaId = ParaId,
 		Balance = BalanceOf<T>,
@@ -292,7 +292,7 @@ decl_event!(
 );
 
 decl_error! {
-	pub enum Error for Module<T: Trait> {
+	pub enum Error for Module<T: Config> {
 		/// This auction is already in progress.
 		AuctionInProgress,
 		/// The lease period is in the past.
@@ -323,7 +323,7 @@ decl_error! {
 }
 
 decl_module! {
-	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+	pub struct Module<T: Config> for enum Call where origin: T::Origin {
 		type Error = Error<T>;
 
 		fn deposit_event() = default;
@@ -520,7 +520,7 @@ decl_module! {
 				.ok_or(Error::<T>::ParaNotOnboarding)?;
 			if let IncomingParachain::Fixed{code_hash, code_size, initial_head_data} = details {
 				ensure!(code.0.len() as u32 == code_size, Error::<T>::InvalidCode);
-				ensure!(<T as frame_system::Trait>::Hashing::hash(&code.0) == code_hash, Error::<T>::InvalidCode);
+				ensure!(<T as frame_system::Config>::Hashing::hash(&code.0) == code_hash, Error::<T>::InvalidCode);
 
 				if starts > Self::lease_period_index() {
 					// Hasn't yet begun. Replace the on-boarding entry with the new information.
@@ -542,7 +542,7 @@ decl_module! {
 	}
 }
 
-impl<T: Trait> Module<T> {
+impl<T: Config> Module<T> {
 	/// Deposit currently held for a particular parachain that we administer.
 	fn deposit_held(para_id: &ParaId) -> BalanceOf<T> {
 		<Deposits<T>>::get(para_id).into_iter().max().unwrap_or_else(Zero::zero)
@@ -579,9 +579,9 @@ impl<T: Trait> Module<T> {
 	/// ending. An immediately subsequent call with the same argument will always return `None`.
 	fn check_auction_end(now: T::BlockNumber) -> Option<(WinningData<T>, LeasePeriodOf<T>)> {
 		if let Some((lease_period_index, early_end)) = <AuctionInfo<T>>::get() {
-			if early_end + T::EndingPeriod::get() == now {
+			let ending_period = T::EndingPeriod::get();
+			if early_end + ending_period == now {
 				// Just ended!
-				let ending_period = T::EndingPeriod::get();
 				let offset = T::BlockNumber::decode(&mut T::Randomness::random_seed().as_ref())
 					.expect("secure hashes always bigger than block numbers; qed") % ending_period;
 				let res = <Winning<T>>::get(offset).unwrap_or_default();
@@ -942,36 +942,41 @@ mod tests {
 	use std::{collections::HashMap, cell::RefCell};
 
 	use sp_core::H256;
-	use sp_runtime::{
-		Perbill,
-		traits::{BlakeTwo256, Hash, IdentityLookup},
-	};
+	use sp_runtime::traits::{BlakeTwo256, Hash, IdentityLookup};
 	use frame_support::{
-		impl_outer_origin, parameter_types, assert_ok, assert_noop,
+		parameter_types, assert_ok, assert_noop,
 		traits::{OnInitialize, OnFinalize}
 	};
 	use pallet_balances;
 	use primitives::v1::{BlockNumber, Header, Id as ParaId};
+	use crate::slots;
 
-	impl_outer_origin! {
-		pub enum Origin for Test {}
-	}
+	type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
+	type Block = frame_system::mocking::MockBlock<Test>;
 
-	// For testing the module, we construct most of a mock runtime. This means
-	// first constructing a configuration type (`Test`) which `impl`s each of the
-	// configuration traits of modules we want to use.
-	#[derive(Clone, Eq, PartialEq)]
-	pub struct Test;
+	frame_support::construct_runtime!(
+		pub enum Test where
+			Block = Block,
+			NodeBlock = Block,
+			UncheckedExtrinsic = UncheckedExtrinsic,
+		{
+			System: frame_system::{Module, Call, Config, Storage, Event<T>},
+			Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
+			Slots: slots::{Module, Call, Storage, Event<T>},
+	 		RandomnessCollectiveFlip: pallet_randomness_collective_flip::{Module, Call, Storage},
+		}
+	);
+
 	parameter_types! {
 		pub const BlockHashCount: u32 = 250;
-		pub const MaximumBlockWeight: u32 = 4 * 1024 * 1024;
-		pub const MaximumBlockLength: u32 = 4 * 1024 * 1024;
-		pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
 	}
-	impl frame_system::Trait for Test {
+	impl frame_system::Config for Test {
 		type BaseCallFilter = ();
+		type BlockWeights = ();
+		type BlockLength = ();
+		type DbWeight = ();
 		type Origin = Origin;
-		type Call = ();
+		type Call = Call;
 		type Index = u64;
 		type BlockNumber = BlockNumber;
 		type Hash = H256;
@@ -979,30 +984,24 @@ mod tests {
 		type AccountId = u64;
 		type Lookup = IdentityLookup<Self::AccountId>;
 		type Header = Header;
-		type Event = ();
+		type Event = Event;
 		type BlockHashCount = BlockHashCount;
-		type MaximumBlockWeight = MaximumBlockWeight;
-		type DbWeight = ();
-		type BlockExecutionWeight = ();
-		type ExtrinsicBaseWeight = ();
-		type MaximumExtrinsicWeight = MaximumBlockWeight;
-		type MaximumBlockLength = MaximumBlockLength;
-		type AvailableBlockRatio = AvailableBlockRatio;
 		type Version = ();
-		type PalletInfo = ();
+		type PalletInfo = PalletInfo;
 		type AccountData = pallet_balances::AccountData<u64>;
 		type OnNewAccount = ();
-		type OnKilledAccount = Balances;
+		type OnKilledAccount = ();
 		type SystemWeightInfo = ();
+		type SS58Prefix = ();
 	}
 
 	parameter_types! {
 		pub const ExistentialDeposit: u64 = 1;
 	}
 
-	impl pallet_balances::Trait for Test {
+	impl pallet_balances::Config for Test {
 		type Balance = u64;
-		type Event = ();
+		type Event = Event;
 		type DustRemoval = ();
 		type ExistentialDeposit = ExistentialDeposit;
 		type AccountStore = System;
@@ -1074,19 +1073,14 @@ mod tests {
 		pub const EndingPeriod: BlockNumber = 3;
 	}
 
-	impl Trait for Test {
-		type Event = ();
+	impl Config for Test {
+		type Event = Event;
 		type Currency = Balances;
 		type Parachains = TestParachains;
 		type LeasePeriod = LeasePeriod;
 		type EndingPeriod = EndingPeriod;
 		type Randomness = RandomnessCollectiveFlip;
 	}
-
-	type System = frame_system::Module<Test>;
-	type Balances = pallet_balances::Module<Test>;
-	type Slots = Module<Test>;
-	type RandomnessCollectiveFlip = pallet_randomness_collective_flip::Module<Test>;
 
 	// This function basically just builds a genesis storage key/value store according to
 	// our desired mock up.

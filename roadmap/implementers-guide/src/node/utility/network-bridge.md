@@ -32,7 +32,7 @@ Output:
 This network bridge sends messages of these types over the network.
 
 ```rust
-enum ProtocolMessage<M> {
+enum WireMessage<M> {
 	ProtocolMessage(M),
 	ViewUpdate(View),
 }
@@ -41,8 +41,8 @@ enum ProtocolMessage<M> {
 and instantiates this type twice, once using the [`ValidationProtocolV1`][VP1] message type, and once with the [`CollationProtocolV1`][CP1] message type.
 
 ```rust
-type ValidationV1Message = ProtocolMessage<ValidationProtocolV1>;
-type CollationV1Message = ProtocolMessage<CollationProtocolV1>;
+type ValidationV1Message = WireMessage<ValidationProtocolV1>;
+type CollationV1Message = WireMessage<CollationProtocolV1>;
 ```
 
 ### Startup
@@ -61,9 +61,13 @@ The `activated` and `deactivated` lists determine the evolution of our local vie
 
 If we are connected to the same peer on both peer-sets, we will send the peer two view updates as a result.
 
+### Overseer Signal: BlockFinalized
+
+We update our view's `finalized_number` to the provided one and delay `ProtocolMessage::ViewUpdate` and `NetworkBridgeEvent::OurViewChange` till the next `ActiveLeavesUpdate`.
+
 ### Network Event: Peer Connected
 
-Issue a `NetworkBridgeEvent::PeerConnected` for each [Event Handler](#event-handlers) of the peer-set and negotiated protocol version of the peer.
+Issue a `NetworkBridgeEvent::PeerConnected` for each [Event Handler](#event-handlers) of the peer-set and negotiated protocol version of the peer. Also issue a `NetworkBridgeEvent::PeerViewChange` and send the peer our current view.
 
 ### Network Event: Peer Disconnected
 
@@ -82,17 +86,15 @@ Map the message onto the corresponding [Event Handler](#event-handlers) based on
 
 - Adjust peer reputation according to cost or benefit provided
 
-### SendValidationMessage
+### SendValidationMessage / SendValidationMessages
 
 - Issue a corresponding `ProtocolMessage` to each listed peer on the validation peer-set.
 
-### SendCollationMessage
+### SendCollationMessage / SendCollationMessages
 
 - Issue a corresponding `ProtocolMessage` to each listed peer on the collation peer-set.
 
 ### ConnectToValidators
-
-> TODO: Currently, this request is limited to the validators in the current session.
 
 - Determine the DHT keys to use for each validator based on the relay-chain state and Runtime API.
 - Recover the Peer IDs of the validators from the DHT. There may be more than one peer ID per validator.

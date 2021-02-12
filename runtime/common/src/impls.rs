@@ -23,35 +23,27 @@ use crate::NegativeImbalance;
 pub struct ToAuthor<R>(sp_std::marker::PhantomData<R>);
 impl<R> OnUnbalanced<NegativeImbalance<R>> for ToAuthor<R>
 where
-	R: pallet_balances::Trait + pallet_authorship::Trait,
-	<R as frame_system::Trait>::AccountId: From<primitives::v1::AccountId>,
-	<R as frame_system::Trait>::AccountId: Into<primitives::v1::AccountId>,
-	<R as frame_system::Trait>::Event: From<pallet_balances::RawEvent<
-		<R as frame_system::Trait>::AccountId,
-		<R as pallet_balances::Trait>::Balance,
-		pallet_balances::DefaultInstance>
-	>,
+	R: pallet_balances::Config + pallet_authorship::Config,
+	<R as frame_system::Config>::AccountId: From<primitives::v1::AccountId>,
+	<R as frame_system::Config>::AccountId: Into<primitives::v1::AccountId>,
+	<R as frame_system::Config>::Event: From<pallet_balances::Event<R>>,
 {
 	fn on_nonzero_unbalanced(amount: NegativeImbalance<R>) {
 		let numeric_amount = amount.peek();
 		let author = <pallet_authorship::Module<R>>::author();
 		<pallet_balances::Module<R>>::resolve_creating(&<pallet_authorship::Module<R>>::author(), amount);
-		<frame_system::Module<R>>::deposit_event(pallet_balances::RawEvent::Deposit(author, numeric_amount));
+		<frame_system::Module<R>>::deposit_event(pallet_balances::Event::Deposit(author, numeric_amount));
 	}
 }
 
 pub struct DealWithFees<R>(sp_std::marker::PhantomData<R>);
 impl<R> OnUnbalanced<NegativeImbalance<R>> for DealWithFees<R>
 where
-	R: pallet_balances::Trait + pallet_treasury::Trait + pallet_authorship::Trait,
+	R: pallet_balances::Config + pallet_treasury::Config + pallet_authorship::Config,
 	pallet_treasury::Module<R>: OnUnbalanced<NegativeImbalance<R>>,
-	<R as frame_system::Trait>::AccountId: From<primitives::v1::AccountId>,
-	<R as frame_system::Trait>::AccountId: Into<primitives::v1::AccountId>,
-	<R as frame_system::Trait>::Event: From<pallet_balances::RawEvent<
-		<R as frame_system::Trait>::AccountId,
-		<R as pallet_balances::Trait>::Balance,
-		pallet_balances::DefaultInstance>
-	>,
+	<R as frame_system::Config>::AccountId: From<primitives::v1::AccountId>,
+	<R as frame_system::Config>::AccountId: Into<primitives::v1::AccountId>,
+	<R as frame_system::Config>::Event: From<pallet_balances::Event<R>>,
 {
 	fn on_unbalanceds<B>(mut fees_then_tips: impl Iterator<Item=NegativeImbalance<R>>) {
 		if let Some(fees) = fees_then_tips.next() {
@@ -72,7 +64,8 @@ where
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use frame_support::{impl_outer_origin, parameter_types, weights::Weight};
+	use frame_system::limits;
+	use frame_support::{parameter_types, weights::DispatchClass};
 	use frame_support::traits::FindAuthor;
 	use sp_core::H256;
 	use sp_runtime::{
@@ -82,52 +75,63 @@ mod tests {
 	};
 	use primitives::v1::AccountId;
 
-	#[derive(Clone, PartialEq, Eq, Debug)]
-	pub struct Test;
+	type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
+	type Block = frame_system::mocking::MockBlock<Test>;
 
-	impl_outer_origin!{
-		pub enum Origin for Test {}
-	}
+	frame_support::construct_runtime!(
+		pub enum Test where
+			Block = Block,
+			NodeBlock = Block,
+			UncheckedExtrinsic = UncheckedExtrinsic,
+		{
+			System: frame_system::{Module, Call, Config, Storage, Event<T>},
+			Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
+			Treasury: pallet_treasury::{Module, Call, Storage, Config, Event<T>},
+		}
+	);
 
 	parameter_types! {
 		pub const BlockHashCount: u64 = 250;
-		pub const ExtrinsicBaseWeight: u64 = 100;
-		pub const MaximumBlockWeight: Weight = 1024;
-		pub const MaximumBlockLength: u32 = 2 * 1024;
+		pub BlockWeights: limits::BlockWeights = limits::BlockWeights::builder()
+			.for_class(DispatchClass::all(), |weight| {
+				weight.base_extrinsic = 100;
+			})
+			.for_class(DispatchClass::non_mandatory(), |weight| {
+				weight.max_total = Some(1024);
+			})
+			.build_or_panic();
+		pub BlockLength: limits::BlockLength = limits::BlockLength::max(2 * 1024);
 		pub const AvailableBlockRatio: Perbill = Perbill::one();
 	}
 
-	impl frame_system::Trait for Test {
+	impl frame_system::Config for Test {
 		type BaseCallFilter = ();
 		type Origin = Origin;
 		type Index = u64;
 		type BlockNumber = u64;
-		type Call = ();
+		type Call = Call;
 		type Hash = H256;
 		type Hashing = BlakeTwo256;
 		type AccountId = AccountId;
 		type Lookup = IdentityLookup<Self::AccountId>;
 		type Header = Header;
-		type Event = ();
+		type Event = Event;
 		type BlockHashCount = BlockHashCount;
-		type MaximumBlockWeight = MaximumBlockWeight;
+		type BlockLength = BlockLength;
+		type BlockWeights = BlockWeights;
 		type DbWeight = ();
-		type BlockExecutionWeight = ();
-		type ExtrinsicBaseWeight = ExtrinsicBaseWeight;
-		type MaximumExtrinsicWeight = MaximumBlockWeight;
-		type MaximumBlockLength = MaximumBlockLength;
-		type AvailableBlockRatio = AvailableBlockRatio;
 		type Version = ();
-		type PalletInfo = ();
+		type PalletInfo = PalletInfo;
 		type AccountData = pallet_balances::AccountData<u64>;
 		type OnNewAccount = ();
 		type OnKilledAccount = ();
 		type SystemWeightInfo = ();
+		type SS58Prefix = ();
 	}
 
-	impl pallet_balances::Trait for Test {
+	impl pallet_balances::Config for Test {
 		type Balance = u64;
-		type Event = ();
+		type Event = Event;
 		type DustRemoval = ();
 		type ExistentialDeposit = ();
 		type AccountStore = System;
@@ -135,45 +139,23 @@ mod tests {
 		type WeightInfo = ();
 	}
 
-	pub struct Nobody;
-	impl frame_support::traits::Contains<AccountId> for Nobody {
-		fn contains(_: &AccountId) -> bool { false }
-		fn sorted_members() -> Vec<AccountId> { vec![] }
-		#[cfg(feature = "runtime-benchmarks")]
-		fn add(_: &AccountId) { unimplemented!() }
-	}
-	impl frame_support::traits::ContainsLengthBound for Nobody {
-		fn min_len() -> usize { 0 }
-		fn max_len() -> usize { 0 }
-	}
-
 	parameter_types! {
 		pub const TreasuryModuleId: ModuleId = ModuleId(*b"py/trsry");
 	}
 
-	impl pallet_treasury::Trait for Test {
+	impl pallet_treasury::Config for Test {
 		type Currency = pallet_balances::Module<Test>;
 		type ApproveOrigin = frame_system::EnsureRoot<AccountId>;
 		type RejectOrigin = frame_system::EnsureRoot<AccountId>;
-		type Event = ();
+		type Event = Event;
 		type OnSlash = ();
 		type ProposalBond = ();
 		type ProposalBondMinimum = ();
 		type SpendPeriod = ();
 		type Burn = ();
 		type BurnDestination = ();
-		type Tippers = Nobody;
-		type TipCountdown = ();
-		type TipFindersFee = ();
-		type TipReportDepositBase = ();
-		type DataDepositPerByte = ();
-		type BountyDepositBase = ();
-		type BountyDepositPayoutDelay = ();
-		type BountyUpdatePeriod = ();
-		type MaximumReasonLength = ();
-		type BountyCuratorDeposit = ();
-		type BountyValueMinimum = ();
 		type ModuleId = TreasuryModuleId;
+		type SpendFunds = ();
 		type WeightInfo = ();
 	}
 
@@ -185,16 +167,12 @@ mod tests {
 			Some(Default::default())
 		}
 	}
-	impl pallet_authorship::Trait for Test {
+	impl pallet_authorship::Config for Test {
 		type FindAuthor = OneAuthor;
 		type UncleGenerations = ();
 		type FilterUncle = ();
 		type EventHandler = ();
 	}
-
-	type Treasury = pallet_treasury::Module<Test>;
-	type Balances = pallet_balances::Module<Test>;
-	type System = frame_system::Module<Test>;
 
 	pub fn new_test_ext() -> sp_io::TestExternalities {
 		let mut t = frame_system::GenesisConfig::default().build_storage::<Test>().unwrap();

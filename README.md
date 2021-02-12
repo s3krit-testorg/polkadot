@@ -40,6 +40,9 @@ gpg --export 9D4B2B6EB8F97156D19669A9FF0812D491B96798 > /usr/share/keyrings/pari
 # Add the Parity repository and update the package index
 echo 'deb [signed-by=/usr/share/keyrings/parity.gpg] https://releases.parity.io/deb release main' > /etc/apt/sources.list.d/parity.list
 apt update
+# Install the `parity-keyring` package - This will ensure the GPG key
+# used by APT remains up-to-date
+apt install parity-keyring
 # Install polkadot
 apt install polkadot
 
@@ -63,6 +66,9 @@ dnf install polkadot
 ## Building
 
 ### Install via Cargo
+
+Make sure you have the support software installed from the **Build from Source** section 
+below this section.
 
 If you want to install Polkadot in your PATH, you can do so with with:
 
@@ -100,7 +106,7 @@ git checkout <latest tagged release>
 cargo build --release
 ```
 
-Note that compilation is a memory intensive process. We recommend having 4 GiB of phyiscal RAM or swap available (keep in mind that if a build hits swap it tends to be very slow).
+Note that compilation is a memory intensive process. We recommend having 4 GiB of physical RAM or swap available (keep in mind that if a build hits swap it tends to be very slow).
 
 ## Networks
 
@@ -152,7 +158,7 @@ Westend's WND tokens, see the faucet
 
 ## Hacking on Polkadot
 
-If you'd actually like hack on Polkadot, you can grab the source code and build it. Ensure you have
+If you'd actually like to hack on Polkadot, you can grab the source code and build it. Ensure you have
 Rust and the support software installed. This script will install or update Rust and install the
 required dependencies (this may take up to 30 minutes on Mac machines):
 
