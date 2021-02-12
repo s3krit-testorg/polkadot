@@ -251,4 +251,3 @@ Polkadot is [GPL 3.0 licensed](LICENSE).
 
 https://polkadot.network/testnetdisclaimer
 
-
